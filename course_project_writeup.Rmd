@@ -1,0 +1,140 @@
+---
+title: "Machine Learning Course Project Writeup"
+author: "PraveenBabu Devabhaktuni"
+date: "23 November 2014"
+output: html_document
+---
+
+#### Lets clean the data first
+
+We have to collect all data from the accelerometer readings. Four accelerometers are used. One each on arm, forearm, dumbbell and belt. Each accelerometer has readings for x,y and z directions and a total. Lets ignore the variance as it is not available for most of the rows. Following are the features that will be used to estimate the correctness of the exercise. One key feature is the user who particated in the trails.
+
+"total_accel_belt", "accel_belt_x", "accel_belt_y", "accel_belt_z", "total_accel_arm",  "accel_arm_x",  "accel_arm_y", "accel_arm_z", "total_accel_dumbbell", "accel_dumbbell_x", "accel_dumbbell_y", "accel_dumbbell_z", "total_accel_forearm", "accel_forearm_x","accel_forearm_y",  "accel_forearm_z", "classe", "user_name"
+
+
+```{r echo=FALSE}
+set.seed(7896)
+library(lattice)
+library(ggplot2)
+library(splines)
+library(parallel)
+library(plyr)
+library(cluster)
+library(survival)
+library(gbm)
+library(caret)
+library(ggplot2)
+dtrain <- read.csv("pml-training.csv", colClasses="character")
+vf <- c("total_accel_belt", "accel_belt_x", "accel_belt_y", "accel_belt_z",
+        "total_accel_arm",  "accel_arm_x",  "accel_arm_y", "accel_arm_z",
+        "total_accel_dumbbell", "accel_dumbbell_x", "accel_dumbbell_y", 
+        "accel_dumbbell_z", "total_accel_forearm", "accel_forearm_x", 
+        "accel_forearm_y",  "accel_forearm_z",
+        "classe", "user_name")
+cdtrain <- dtrain[vf]
+
+## Convert characters to numeric and factor as required.
+
+pdtrain <- cdtrain
+pdtrain$total_accel_belt <- as.numeric(cdtrain$total_accel_belt)
+pdtrain$accel_belt_x <- as.numeric(cdtrain$accel_belt_x)
+pdtrain$accel_belt_y <- as.numeric(cdtrain$accel_belt_y)
+pdtrain$accel_belt_z <- as.numeric(cdtrain$accel_belt_z)
+
+pdtrain$total_accel_arm <- as.numeric(cdtrain$total_accel_arm)
+pdtrain$accel_arm_x <- as.numeric(cdtrain$accel_arm_x)
+pdtrain$accel_arm_y <- as.numeric(cdtrain$accel_arm_y)
+pdtrain$accel_arm_z <- as.numeric(cdtrain$accel_arm_z)
+
+
+pdtrain$total_accel_dumbbell <- as.numeric(cdtrain$total_accel_dumbbell)
+pdtrain$accel_dumbbell_x <- as.numeric(cdtrain$accel_dumbbell_x)
+pdtrain$accel_dumbbell_y <- as.numeric(cdtrain$accel_dumbbell_y)
+pdtrain$accel_dumbbell_z <- as.numeric(cdtrain$accel_dumbbell_z)
+
+pdtrain$total_accel_forearm <- as.numeric(cdtrain$total_accel_forearm)
+pdtrain$accel_forearm_x <- as.numeric(cdtrain$accel_forearm_x)
+pdtrain$accel_forearm_y <- as.numeric(cdtrain$accel_forearm_y)
+pdtrain$accel_forearm_z <- as.numeric(cdtrain$accel_forearm_z)
+
+pdtrain$user_name <- as.factor(cdtrain$user_name)
+pdtrain$classe <- as.factor(cdtrain$classe)
+
+```
+
+#### Now lets try analysing the data
+Plot all the Y reading of four accelerometers in different colours and factor them using user_name.
+
+```{r echo=FALSE}
+g <- ggplot(pdtrain)
+g <- g + geom_point(aes(y=classe,x=accel_arm_y,colour="blue")) 
+g <- g + geom_point(aes(y=classe,x=accel_forearm_y,colour="red")) 
+g <- g + geom_point(aes(y=classe,x=accel_belt_y,colour="black")) 
+g <- g + geom_point(aes(y=classe,x=accel_dumbbell_y,colour="green"))
+g <- g + facet_grid(user_name~.)
+g
+```
+
+It is clear there are no obvious linear patterns. There is intense overlap of the readings at all classes and for all users. We can see some difference due to the user_name. Lets try to plot data for a particular user.
+
+```{r echo=FALSE}
+g <- ggplot(pdtrain[pdtrain$user_name %in% c("adelmo"),])
+g <- g + geom_point(aes(y=classe,x=accel_arm_y,colour="blue")) 
+g <- g + geom_point(aes(y=classe,x=accel_forearm_y,colour="red")) 
+g <- g + geom_point(aes(y=classe,x=accel_belt_y,colour="black")) 
+g <- g + geom_point(aes(y=classe,x=accel_dumbbell_y,colour="green")) 
+g
+```
+
+The overlap of reading from different accelerometers is very clear. We have to first branch on user_name and then proceed further. Now lets plot the relation between the dumbbell and belt accelerometers.
+
+```{r echo=FALSE}
+g <- ggplot(pdtrain[pdtrain$user_name=="adelmo",],
+            aes(y=accel_dumbbell_y,x=accel_belt_y,shape=classe,color=classe))
+g <- g + geom_point() 
+g
+```
+
+Here too we dont see any pattern, but it appears like there are some divisions of the graph where we can clearly identify the classe.
+
+Instead of branching first with user_name and then branching further, it looks like breaking down the graph in to channels will help predict the classe.
+
+We cannot use linear regression as there is no obvious linear pattern. Branching like trees is one option but it is not obvious how to branch after branching using user_name.
+
+Breaking the graph in to channels to predict the classe looks promising.
+Lets use the boosting method.
+
+Divide the data set in to two equal partitions for training and testing.
+
+Train the Model using caret package's train function and "gbm" method.
+
+Here is the table showing cross validation.
+
+```{r echo=FALSE}
+
+inTrain <- createDataPartition(pdtrain$classe,p=0.5, list=FALSE)
+truetrain <- pdtrain[inTrain,]
+truetest <- pdtrain[-inTrain,]
+
+mfb <- train(classe ~ ., method="gbm",data=truetrain, verbose=FALSE)
+trainresult <- predict(mfb,truetrain)
+tab <- table(trainresult,truetrain$classe)
+print(tab)
+
+pcorrect <- (tab[1,1] + tab[2,2] + tab[3,3] + tab[4,4] + tab[5,5])/length(trainresult)
+perror <- 1 - pcorrect
+```
+
+Probability of error is `r perror`  and correct prediction in `r pcorrect`
+
+Now lets run the model on test data set and cross validate.
+
+```{r echo=FALSE}
+testresult <- predict(mfb,truetest)
+tab <- table(testresult,truetest$classe)
+print(tab)
+pcorrect <- (tab[1,1] + tab[2,2] + tab[3,3] + tab[4,4] + tab[5,5])/length(testresult)
+perror <- 1 - pcorrect
+```
+
+Probability of error is `r perror` and correct prediction in `r pcorrect`
